@@ -6,6 +6,9 @@ class BillRequest(BaseModel):
     kwh: float = Field(ge=0)
     peak: bool = False
     persist: bool = True
+    year: int | None = Field(default=None, ge=1900, le=2999)
+    month: int | None = Field(default=None, ge=1, le=12)
+    plan_code: str | None = None
 
 
 class CompareRequest(BaseModel):

@@ -6,16 +6,20 @@ from app.engines.tier_progressive import calc_bill
 from app.repositories import accounts as accounts_repo
 from app.repositories import readings as readings_repo
 from app.repositories import runs as runs_repo
+from app.repositories import season_plans as season_plans_repo
 from app.repositories import settings as settings_repo
 from app.repositories import tiers as tiers_repo
+from app.services.season_service import SeasonService
 
 
 class BillingService:
-    def __init__(self):
-        self._conn = connect()
+    def __init__(self, conn=None):
+        self._owns = conn is None
+        self._conn = conn or connect()
 
     def close(self):
-        self._conn.close()
+        if self._owns:
+            self._conn.close()
 
     def __enter__(self):
         return self
@@ -41,21 +45,70 @@ class BillingService:
     def settings_map(self):
         return settings_repo.get_map(self._conn)
 
-    def run_bill(self, kwh: float, peak: bool, account_id: int | None, persist: bool):
-        tiers = tiers_repo.as_calc_rows(self._conn)
+    def run_bill(
+        self,
+        kwh: float,
+        peak: bool,
+        account_id: int | None,
+        persist: bool,
+        year: int | None = None,
+        month: int | None = None,
+        plan_code: str | None = None,
+    ):
         pf = settings_repo.peak_factor(self._conn)
         factor = pf if peak else 1.0
+
+        if plan_code is not None:
+            # 显式指定档表：直接按方案标识取用，不做月份解析
+            plan = season_plans_repo.get_by_code(self._conn, plan_code)
+            if plan is None:
+                raise KeyError(plan_code)
+            tiers = [{"up_to": t["up_to"], "price": t["price"]} for t in plan["tiers"]]
+            applied = {
+                "fallback": False,
+                "fallback_reason": "matched",
+                "plan": {
+                    "id": plan["id"],
+                    "code": plan["code"],
+                    "name": plan["name"],
+                    "months": plan["months"],
+                },
+                "year": year,
+                "month": month,
+            }
+            year_resolved, month_resolved = year, month
+        else:
+            # 未显式指定：正式测算必须走账期解析结果，无命中回退全局默认 tiers
+            resolved = SeasonService(self._conn).resolve_period(year, month)
+            year_resolved, month_resolved = resolved["year"], resolved["month"]
+            tiers = resolved["tiers"]
+            applied = {
+                "fallback": resolved["fallback"],
+                "fallback_reason": resolved["fallback_reason"],
+                "plan": resolved["plan"],
+                "year": year_resolved,
+                "month": month_resolved,
+            }
+
         result = calc_bill(kwh, tiers, factor)
         run_id = None
         if persist:
             run_id = runs_repo.insert(
                 self._conn,
                 "bill",
-                {"kwh": kwh, "peak": peak, "account_id": account_id},
+                {
+                    "kwh": kwh,
+                    "peak": peak,
+                    "account_id": account_id,
+                    "year": year_resolved,
+                    "month": month_resolved,
+                    "plan_code": plan_code,
+                    "applied": applied,
+                },
                 result,
                 account_id,
             )
-        return {"run_id": run_id, **result}
+        return {"run_id": run_id, "applied": applied, **result}
 
     def run_compare(self, kwh: float, persist: bool):
         tiers = tiers_repo.as_calc_rows(self._conn)
