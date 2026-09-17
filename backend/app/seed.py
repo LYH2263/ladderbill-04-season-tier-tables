@@ -14,6 +14,16 @@ def init_db():
         id INTEGER PRIMARY KEY, name TEXT, meter_no TEXT, note TEXT);
     CREATE TABLE IF NOT EXISTS readings(id INTEGER PRIMARY KEY, account_id INTEGER, kwh REAL, peak INTEGER);
     CREATE TABLE IF NOT EXISTS tiers(id INTEGER PRIMARY KEY, up_to REAL, price REAL, sort_order INTEGER);
+    CREATE TABLE IF NOT EXISTS season_schemes(
+        id INTEGER PRIMARY KEY,
+        key TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        months TEXT NOT NULL,
+        tiers TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT,
+        updated_at TEXT
+    );
     CREATE TABLE IF NOT EXISTS calc_runs(
         id INTEGER PRIMARY KEY,
         kind TEXT,
@@ -49,6 +59,18 @@ def init_db():
         conn.execute(
             "INSERT INTO calc_runs(kind, account_id, input_json, result_json, created_at) VALUES (?,?,?,?,datetime('now'))",
             ("compare", 2, json.dumps({"kwh": 400}), json.dumps(cmp2, ensure_ascii=False)),
+        )
+        conn.commit()
+    if conn.execute("SELECT COUNT(*) c FROM season_schemes").fetchone()["c"] == 0:
+        summer = [{"up_to": 200, "price": 0.55}, {"up_to": 320, "price": 0.68}, {"up_to": None, "price": 0.9}]
+        winter = [{"up_to": 160, "price": 0.5}, {"up_to": 240, "price": 0.6}, {"up_to": None, "price": 0.8}]
+        conn.execute(
+            "INSERT INTO season_schemes(key, name, months, tiers, enabled, created_at, updated_at) VALUES (?,?,?,?,1,datetime('now'),datetime('now'))",
+            ("summer-ac", "夏季空调方案", json.dumps([6, 7, 8, 9]), json.dumps(summer)),
+        )
+        conn.execute(
+            "INSERT INTO season_schemes(key, name, months, tiers, enabled, created_at, updated_at) VALUES (?,?,?,?,1,datetime('now'),datetime('now'))",
+            ("winter-heat", "冬季采暖方案", json.dumps([12, 1, 2]), json.dumps(winter)),
         )
         conn.commit()
     conn.close()

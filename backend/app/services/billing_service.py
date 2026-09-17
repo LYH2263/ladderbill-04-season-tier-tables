@@ -8,6 +8,7 @@ from app.repositories import readings as readings_repo
 from app.repositories import runs as runs_repo
 from app.repositories import settings as settings_repo
 from app.repositories import tiers as tiers_repo
+from app.services import season_service
 
 
 class BillingService:
@@ -41,17 +42,30 @@ class BillingService:
     def settings_map(self):
         return settings_repo.get_map(self._conn)
 
-    def run_bill(self, kwh: float, peak: bool, account_id: int | None, persist: bool):
-        tiers = tiers_repo.as_calc_rows(self._conn)
+    def run_bill(
+        self,
+        kwh: float,
+        peak: bool,
+        account_id: int | None,
+        persist: bool,
+        period: str | None = None,
+        scheme_key: str | None = None,
+    ):
+        # 未显式指定档表时按账期解析季节方案，未命中回退全局默认 tiers
+        resolution = season_service.resolve_tiers(self._conn, period, scheme_key)
         pf = settings_repo.peak_factor(self._conn)
         factor = pf if peak else 1.0
-        result = calc_bill(kwh, tiers, factor)
+        result = calc_bill(kwh, resolution["tiers"], factor)
+        result["tier_source"] = {
+            k: resolution[k]
+            for k in ("source", "fallback", "reason", "scheme_key", "scheme_name", "period", "month")
+        }
         run_id = None
         if persist:
             run_id = runs_repo.insert(
                 self._conn,
                 "bill",
-                {"kwh": kwh, "peak": peak, "account_id": account_id},
+                {"kwh": kwh, "peak": peak, "account_id": account_id, "period": period, "scheme_key": scheme_key},
                 result,
                 account_id,
             )
@@ -68,6 +82,27 @@ class BillingService:
 
     def list_history(self, limit: int = 50):
         return runs_repo.list_recent(self._conn, limit)
+
+    def list_season_schemes(self):
+        return season_service.list_schemes(self._conn)
+
+    def get_season_scheme(self, key: str):
+        return season_service.get_scheme(self._conn, key)
+
+    def create_season_scheme(self, data: dict):
+        return season_service.create_scheme(self._conn, data)
+
+    def update_season_scheme(self, key: str, data: dict):
+        return season_service.update_scheme(self._conn, key, data)
+
+    def delete_season_scheme(self, key: str):
+        return season_service.delete_scheme(self._conn, key)
+
+    def resolve_season(self, period: str | None = None, scheme_key: str | None = None):
+        return season_service.resolve_tiers(self._conn, period, scheme_key)
+
+    def trial_season_scheme(self, key: str, kwh: float, peak: bool = False):
+        return season_service.trial(self._conn, key, kwh, peak)
 
     def get_run(self, run_id: int):
         return runs_repo.get(self._conn, run_id)

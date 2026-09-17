@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import seed
 from app.routers import api
 
-app = FastAPI(title="Ladderbill", version="0.2.0")
+app = FastAPI(title="Ladderbill", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
